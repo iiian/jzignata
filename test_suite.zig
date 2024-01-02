@@ -6,6 +6,7 @@ const mem = std.mem;
 const path = fs.path;
 
 const print = std.debug.print;
+const expect = std.testing.expect;
 
 const TestCase = struct {
     expr: []u8,
@@ -35,21 +36,32 @@ test "jsonata test suite" {
         const tcraw = try std.fs.cwd().readFileAlloc(m, tcpath, std.math.maxInt(usize));
         defer m.free(tcraw);
 
-        const tc = json.parseFromSlice(TestCase, m, tcraw, json.ParseOptions{
+        var tc = json.parseFromSlice(TestCase, m, tcraw, json.ParseOptions{
             .ignore_unknown_fields = true,
         }) catch continue;
         defer tc.deinit();
         const dsfname = try std.mem.concat(m, u8, &.{ tc.value.dataset, ".json" });
         const dspath = try path.join(m, &(frag_chunk ++ .{ "datasets", dsfname }));
         const dsraw = try std.fs.cwd().readFileAlloc(m, dspath, std.math.maxInt(usize));
-        print("{s}\n", .{tcpath});
-        print("{s}\n", .{tc.value.expr});
-        print("{d}\n", .{dsraw.len});
-        tc.value.result.dump();
-        print("\n\n", .{});
+        _ = dsraw;
+        var expected = std.ArrayList(u8).init(m);
+        defer expected.deinit();
+        var actual = std.ArrayList(u8).init(m);
+        defer actual.deinit();
+        try json.stringify(try jsonata(tc.value.expr), .{}, actual.writer());
+        try json.stringify(tc.value.result, .{}, expected.writer());
+        
+        if (!std.mem.eql(u8, expected.items, actual.items)) {
+            print("[!!] TESTCASE: {s}{s}\n", .{entry.path, dsfname});
+            print("     DATASET: {s}\n", .{tc.value.dataset});
+            print("     expr: {s}\n", .{tc.value.expr});
+            print("     expected: {s}\n", .{expected.items});
+            print("     got: {d}\n", .{actual.items});
+            try std.testing.expectEqualSlices(u8, expected.items, actual.items);
+            // try expect(std.mem.eql(u8, expected.items, actual.items));
+        } else {
+            print("[OK] TESTCASE: {s}\n", .{dsfname});
+        }
+        print("\n", .{});
     }
-}
-
-test "final" {
-    _ = try jsonata("Foo fuz");
 }
