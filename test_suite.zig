@@ -1,4 +1,5 @@
 const std = @import("std");
+const jsonata = @import("lib.zig").jsonata;
 const json = std.json;
 const fs = std.fs;
 const mem = std.mem;
@@ -47,4 +48,8 @@ test "jsonata test suite" {
         tc.value.result.dump();
         print("\n\n", .{});
     }
+}
+
+test "final" {
+    _ = try jsonata("Foo fuz");
 }
