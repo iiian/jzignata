@@ -1,5 +1,6 @@
 const std = @import("std");
 const json = std.json;
+const unicode = std.unicode;
 
 // [str] -> #
 const operators = std.ComptimeStringMap(u8, .{
@@ -55,6 +56,7 @@ const escapes = std.ComptimeStringMap(u8, .{
 
 const ParseErr = error {
   Unimplemented, // X0000
+  UnsupportedEscapeSequence, // S0103
   CommentDoesntEnd, // S0106
 };
 
@@ -76,7 +78,11 @@ const ErrCtx = struct {
   code: []u8,
   pos: usize,
   value: ?[]u8 = null,
+  token: ?u8 = null,
 };
+
+// TODO: after tokenization creates the Ast, how do we deinit
+//       everything we created for tokenization that is now stale?
 
 /// Tokenizer
 ///   takes in a raw jsonata expression string
@@ -173,20 +179,49 @@ const Tokenizer = struct {
 
     // test for string literals
     if (c == '"' or c == '\'') {
-      const qt = c;
-      _ = qt; // quote type
+      const qt = c; // quote type
       // double quoted string literal - find end of string
       this.pos += 1;
       var qstr = std.ArrayList(u8).init(this.arena);
-      defer qstr.deinit();
       while (this.pos < this.hay.len) {
         c = this.hay[this.pos];
         if (c == '\\') {
           this.pos += 1;
           c = this.hay[this.pos];
           if (escapes.get(c) != null) {
-
+            qstr.insert(1, escapes.get(c).?);
+          } else if (c == 'u') {
+            this.err = ErrCtx{
+              .code = "X0000",
+              .pos = this.pos,
+              .value = c,
+            };
+            // TODO
+            return ParseErr.Unimplemented; // line 219 of parser.js
+            // const b = (this.pos+1);
+            // const e = b + 4;
+            // const octets = this.hay[b..e];
+            // const OCTETS = "abcdefABCDEF0123456789";
+            // const is_octet = (
+            //   (std.mem.indexOf(u8, OCTETS, octets[0]) > -1) and
+            //   (std.mem.indexOf(u8, OCTETS, octets[1]) > -1) and
+            //   (std.mem.indexOf(u8, OCTETS, octets[2]) > -1) and
+            //   (std.mem.indexOf(u8, OCTETS, octets[3]) > -1)
+            // );
+            // if (is_octet) {
+            //   unicode.utf8Decode4(octets);
+            // }
+          } else {
+            this.err = ErrCtx{
+              .code = "S0103",
+              .pos = this.pos,
+              .token = c,
+            };
+            return ParseErr.UnsupportedEscapeSequence;
           }
+        } else if (c == qt) {
+          this.pos += 1;
+          return Token.create(this.pos, "string", qstr.items);
         }
       }
     }
