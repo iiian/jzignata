@@ -27,7 +27,7 @@ pub fn build(b: *std.Build) void {
 
     const lib = b.addSharedLibrary(std.Build.SharedLibraryOptions{
         .name = "jzignata",
-        .root_source_file = .{ .path = "lib.zig" },
+        .root_source_file = .{ .path = "jsonata.zig" },
         .target = target,
         .optimize = optimize,
         .version = .{ .major = 0, .minor = 0, .patch = 1 }
