@@ -15,6 +15,11 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optopts = .{ .preferred_optimize_mode = std.builtin.OptimizeMode.Debug };
     const optimize = b.standardOptimizeOption(optopts);
+    const regex_dep = b.dependency("regex", .{
+        // These are the arguments to the dependency. It expects a target and optimization level.
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "zig",
@@ -22,17 +27,7 @@ pub fn build(b: *std.Build) void {
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "jsonata.zig" },
     });
-
-    // const lib = b.addSharedLibrary(std.Build.SharedLibraryOptions{
-    //     .name = "jzignata",
-    //     .root_source_file = .{ .path = "jsonata.zig" },
-        
-    //     .target = target,
-    //     .optimize = optimize,
-    //     .version = .{ .major = 0, .minor = 0, .patch = 1 }
-    // });
-
-    // b.installArtifact(lib);
+    exe.addModule("regex", regex_dep.module("regex"));
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

@@ -1,0 +1,15 @@
+.{
+  .name = "jzignata",
+  .version = "0.0.1",
+  .paths = .{
+      "build.zig",
+      "build.zig.zon",
+      "src/",
+  },
+  .dependencies = .{
+    .regex = .{
+        .url = "https://github.com/tiehuis/zig-regex/archive/2bd15fd900e9277d3ef2d9ceef2874e9390d021d.tar.gz",
+        .hash = "122076a647ddc52a90732151e3354081c616e4aea55efedb55adff4a839a6cfc3d25",
+    },
+  },
+}
