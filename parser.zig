@@ -2,58 +2,56 @@ const std = @import("std");
 const json = std.json;
 
 // [str] -> #
-const operators = std.StringHashMap(u8){};
-comptime {
-  operators.put(".", 75);
-  operators.put("[", 80);
-  operators.put("]", 0);
-  operators.put("{", 70);
-  operators.put("}", 0);
-  operators.put("(", 80);
-  operators.put(")", 0);
-  operators.put(",", 0);
-  operators.put("@", 80);
-  operators.put("#", 80);
-  operators.put(";", 80);
-  operators.put(":", 80);
-  operators.put("?", 20);
-  operators.put("+", 50);
-  operators.put("-", 50);
-  operators.put("*", 60);
-  operators.put("/", 60);
-  operators.put("%", 60);
-  operators.put("|", 20);
-  operators.put("=", 40);
-  operators.put("<", 40);
-  operators.put(">", 40);
-  operators.put("^", 40);
-  operators.put("**", 60);
-  operators.put("..", 20);
-  operators.put(":=", 10);
-  operators.put("!=", 40);
-  operators.put("<=", 40);
-  operators.put(">=", 40);
-  operators.put("~>", 40);
-  operators.put("and", 30);
-  operators.put("or", 25);
-  operators.put("in", 40);
-  operators.put("&", 50);
-  operators.put("!", 0);   // not an operator, but needed as a stop character for name token
-  operators.put("~", 0);   // not an operator, but needed as a stop character for name token
-}
+const operators = std.ComptimeStringMap(u8, .{
+  .{".", 75},
+  .{"[", 80},
+  .{"]", 0},
+  .{"{", 70},
+  .{"}", 0},
+  .{"(", 80},
+  .{")", 0},
+  .{",", 0},
+  .{"@", 80},
+  .{"#", 80},
+  .{";", 80},
+  .{":", 80},
+  .{"?", 20},
+  .{"+", 50},
+  .{"-", 50},
+  .{"*", 60},
+  .{"/", 60},
+  .{"%", 60},
+  .{"|", 20},
+  .{"=", 40},
+  .{"<", 40},
+  .{">", 40},
+  .{"^", 40},
+  .{"**", 60},
+  .{"..", 20},
+  .{":=", 10},
+  .{"!=", 40},
+  .{"<=", 40},
+  .{">=", 40},
+  .{"~>", 40},
+  .{"and", 30},
+  .{"or", 25},
+  .{"in", 40},
+  .{"&", 50},
+  .{"!", 0},   // not an operator, but needed as a stop character for name token
+  .{"~", 0},   // not an operator, but needed as a stop character for name token
+}){};
 
 // [str] -> char
-const escapes = std.StringHashMap(u8){};
-comptime {
-  escapes.put("\"", '"');
-  escapes.put("\\", '\\');
-  escapes.put("/", '/');
-  escapes.put("b", 'b');
-  escapes.put("f", 'f');
-  escapes.put("n", 'n');
-  escapes.put("t", 't');
-  escapes.put("r", 'r');
-}
+const escapes = std.ComptimeStringMap(u8, .{
+  .{"\"", '"'},
+  .{"\\", '\\'},
+  .{"/", '/'},
+  .{"b", 'b'},
+  .{"f", 'f'},
+  .{"n", 'n'},
+  .{"t", 't'},
+  .{"r", 'r'},
+}){};
 
 const ParseErr = error {
   Unimplemented, // X0000
@@ -85,11 +83,11 @@ const ErrCtx = struct {
 ///   yields "tokens" until the (end) token is reached.
 const Tokenizer = struct {
   pos: usize = 0,
-  hay: []u8,
+  hay: []const u8,
   err: ?ErrCtx = null,
   arena: std.heap.ArenaAllocator,
 
-  pub fn create(arena: std.heap.ArenaAllocator, hay: []u8) Tokenizer {
+  pub fn create(arena: std.heap.ArenaAllocator, hay: []const u8) Tokenizer {
     return .{
       .arena = arena,
       .hay = hay
@@ -168,7 +166,7 @@ const Tokenizer = struct {
     }
 
     // test for single char operators
-    if (operators.get(&c)) {
+    if (operators.get(&c) != null) {
       this.pos += 1;
       return Token.create(this.pos, "operator", &c);
     }
@@ -181,6 +179,16 @@ const Tokenizer = struct {
       this.pos += 1;
       var qstr = std.ArrayList(u8).init(this.arena);
       defer qstr.deinit();
+      while (this.pos < this.hay.len) {
+        c = this.hay[this.pos];
+        if (c == '\\') {
+          this.pos += 1;
+          c = this.hay[this.pos];
+          if (escapes.get(c) != null) {
+
+          }
+        }
+      }
     }
   }
 };
@@ -191,13 +199,14 @@ test "tokenizer" {
 
 const Ast = struct {};
 
-const Parser = struct {
+pub const Parser = struct {
   arena: std.heap.ArenaAllocator,
   lexer: Tokenizer,
-  pub fn create(allocator: std.mem.Allocator, hay: []u8) Parser {
+  pub fn create(allocator: std.mem.Allocator, hay: []const u8) Parser {
+    const arena = std.heap.ArenaAllocator.init(allocator);
     return .{
-      .arena = std.heap.ArenaAllocator.init(allocator),
-      .lexer = Tokenizer.create(hay),
+      .arena = arena,
+      .lexer = Tokenizer.create(arena, hay),
     };
   }
 
