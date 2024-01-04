@@ -63,7 +63,11 @@ const ParseErr = error{
     UnsupportedEscapeSequence, // S0103
     QuotedPropertyNameUnclosed, // S0105
     CommentDoesntEnd, // S0106
+    SyntaxErr, // S0201
+    ParentCannotBeDerived, // S0217
 };
+
+const GetTokenFn = *const fn (ctx: *Token) ParseErr!?*Token;
 
 const Token = struct {
     id: ?[]u8 = null,
@@ -75,6 +79,9 @@ const Token = struct {
     typ: []u8,
     val: []u8,
 
+    nud: GetTokenFn = Token.defaultGetter,
+    led: GetTokenFn = Token.defaultGetter,
+
     pub fn init(pos: u32, typ: []u8, val: []u8) Token {
         return Token{
             .pos = pos,
@@ -82,13 +89,18 @@ const Token = struct {
             .val = val,
         };
     }
+
+    fn defaultGetter(ctx: *Token) ParseErr!?*Token {
+        _ = ctx;
+        return null;
+    }
 };
 
 const ErrCtx = struct {
-    code: []u8,
+    code: []const u8,
     pos: usize,
     value: ?[]u8 = null,
-    token: ?u8 = null,
+    token: ?[]u8 = null,
 };
 
 // TODO: after tokenization creates the Ast, how do we deinit
@@ -332,17 +344,25 @@ test "tokenizer" {}
 const Ast = struct {};
 
 pub const Parser = struct {
+    err: ?ErrCtx = null,
     arena: ArenaAllocator,
     lexer: Tokenizer,
-    pub fn create(allocator: Allocator, hay: []const u8) Parser {
+    node: ?Token = null,
+    pub fn init(allocator: Allocator, hay: []const u8) Parser {
         var arena = ArenaAllocator.init(allocator);
-        return .{
+        return Parser{
             .arena = arena,
             .lexer = Tokenizer.init(arena.allocator(), hay),
         };
     }
 
-    pub fn advance(this: *@This(), id: ?[]u8, infix: ?[]u8) !?Token {
+    pub fn processAST(this: *@This(), token: Token) ParseErr!?Token {
+        _ = this;
+        _ = token;
+        return null;
+    }
+
+    pub fn advance(this: *@This(), id: ?[]u8, infix: ?[]u8) ParseErr!?Token {
         _ = this;
         _ = infix;
         _ = id;
@@ -350,8 +370,36 @@ pub const Parser = struct {
         return null;
     }
 
-    pub fn parse(this: *@This()) !?Ast {
-        _ = try this.advance(null, null);
+    pub fn expression(this: *@This(), rbp: u8) ParseErr!?Token {
+        _ = this;
+        _ = rbp;
         return null;
+    }
+
+    pub fn parse(this: *@This()) ParseErr!?Token {
+        _ = try this.advance(null, null);
+        var expr = (try this.expression(0)).?;
+        if (!std.mem.eql(u8, this.node.?.id.?, "(end)")) {
+            this.err = ErrCtx{
+                .code = "S0201",
+                .pos = this.node.?.pos,
+                .token = this.node.?.val,
+            };
+            return ParseErr.SyntaxErr;
+        }
+        // eventually, we may split Token and ..idk, Expression?
+        expr = (try this.processAST(expr)).?;
+        if (!std.mem.eql(u8, expr.typ, "parent")
+        //or expr.seekingParent == null
+        ) {
+            this.err = ErrCtx{
+                .code = "S0217",
+                .pos = expr.pos,
+                .token = expr.typ,
+            };
+            return ParseErr.ParentCannotBeDerived;
+        }
+
+        return expr;
     }
 };
