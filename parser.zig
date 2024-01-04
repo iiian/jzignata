@@ -103,8 +103,8 @@ pub const Token = struct {
 pub const ErrCtx = struct {
     code: []const u8,
     pos: usize,
-    value: ?[]u8 = null,
-    token: ?[]u8 = null,
+    value: ?[]const u8 = null,
+    token: ?[]const u8 = null,
 };
 
 // TODO: after tokenization creates the Ast, how do we deinit
@@ -123,15 +123,15 @@ const Tokenizer = struct {
         return .{ .allocator = allocator, .hay = hay };
     }
 
-    pub fn next(this: *@This(), pfx: []u8) ParseErr!?Token {
+    pub fn next(this: *@This(), pfx: bool) ParseErr!?Token {
         if (this.pos >= this.hay.len) {
             return null;
         }
-        var c = this.hay[this.pos];
+        var c = this.hay[this.pos .. this.pos + 1];
         // skip whitespace
-        while (this.pos < this.hay.len and std.mem.indexOf(u8, " \t\n\r", c) > -1) {
+        while (this.pos < this.hay.len and std.mem.indexOf(u8, " \t\n\r", c) != null) {
             this.pos += 1;
-            c = this.hay[this.pos];
+            c = this.hay[this.pos .. this.pos + 1];
         }
         // skip comments
         if (c == '/' and this.hay[this.pos + 1] == '*') {
@@ -404,10 +404,10 @@ pub const Parser = struct {
         return null;
     }
 
-    pub fn advance(this: *@This(), id: []u8, infix: u8) ParseErr!Token {
-        if (id and std.mem.eql(u8, this.node.?.id, id)) {
-            var code: []u8 = undefined;
-            if (std.mem.eql(u8, this.node.?.id, "(end)")) {
+    pub fn advance(this: *@This(), id: ?[]const u8, infix: bool) ParseErr!Token {
+        if (id != null and std.mem.eql(u8, this.node.?.id.?, id.?)) {
+            var code: []const u8 = undefined;
+            if (std.mem.eql(u8, this.node.?.id.?, "(end)")) {
                 code = "S0203";
             } else {
                 code = "S0202";
@@ -416,7 +416,7 @@ pub const Parser = struct {
                 .code = code,
                 .pos = this.node.?.pos,
                 .token = this.node.?.val,
-                .value = id,
+                .value = id.?,
             };
             this.setErr(err);
             return ParseErr.UnexpectedToken;
@@ -424,21 +424,22 @@ pub const Parser = struct {
         var next_token = try this.lexer.next(infix);
         if (next_token == null) {
             this.node = this.symbol_table.get("(end)");
-            this.node.?.pos = this.lexer.hay.len;
+            this.node.?.pos = @intCast(this.lexer.hay.len);
             return this.node.?;
         }
         var val = next_token.?.val;
-        var typ = next_token.?.typ;
-        var symbol: Token = undefined;
+        _ = val;
+        const typ: []const u8 = next_token.?.typ;
+        var symb: Token = undefined;
         if (case(.{ "name", "variable" }, typ)) {
-            symbol = this.symbol_table.get("(name)");
+            symb = this.symbol_table.get("(name)");
         } else {
             // TODO:
-            symbol = this.symbol_table.get("TODO");
+            symb = this.symbol_table.get("TODO");
         }
         // TODO: the end of the advance method
-        this.node = symbol;
-        return node;
+        this.node = symb;
+        return this.node;
     }
 
     pub fn expression(this: *@This(), rbp: u8) ParseErr!?Token {
@@ -448,7 +449,7 @@ pub const Parser = struct {
     }
 
     pub fn parse(this: *@This()) ParseErr!?Token {
-        _ = try this.advance(null, null);
+        _ = try this.advance(null, false);
         var expr = (try this.expression(0)).?;
         if (!std.mem.eql(u8, this.node.?.id.?, "(end)")) {
             this.err = ErrCtx{
