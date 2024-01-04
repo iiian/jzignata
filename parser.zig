@@ -57,30 +57,34 @@ const escapes = std.ComptimeStringMap(u8, .{
     .{ "r", 'r' },
 }){};
 
-const ParseErr = error{
+pub const ParseErr = error{
     Unimplemented, // X0000
     NumOutOfRange, // S0102
     UnsupportedEscapeSequence, // S0103
     QuotedPropertyNameUnclosed, // S0105
     CommentDoesntEnd, // S0106
     SyntaxErr, // S0201
+    UnexpectedToken, // S0202
+    BadUnaryOpAttempt, // S0211
     ParentCannotBeDerived, // S0217
 };
 
 const GetTokenFn = *const fn (ctx: *Token) ParseErr!?*Token;
 
-const Token = struct {
+pub const Token = struct {
     id: ?[]u8 = null,
     // ancestor: ?Token // -- this won't matter until we do processAST
     // tuple?
     // expressions?
     // steps?
-    pos: u32,
-    typ: []u8,
-    val: []u8,
+    pos: u32 = undefined,
+    typ: []u8 = undefined,
+    val: []u8 = undefined,
+    parser: *Parser = undefined,
 
     nud: GetTokenFn = Token.defaultGetter,
     led: GetTokenFn = Token.defaultGetter,
+    lbp: u8 = undefined,
 
     pub fn init(pos: u32, typ: []u8, val: []u8) Token {
         return Token{
@@ -96,7 +100,7 @@ const Token = struct {
     }
 };
 
-const ErrCtx = struct {
+pub const ErrCtx = struct {
     code: []const u8,
     pos: usize,
     value: ?[]u8 = null,
@@ -341,19 +345,57 @@ fn case(comptime haystack: []const []const u8, needle: []const u8) bool {
 
 test "tokenizer" {}
 
-const Ast = struct {};
+const SymbolTable = std.StringArrayHashMap(Token);
+
+fn base_symbol_nud(this: *Token) ParseErr!?*Token {
+    this.parser.setErr(ErrCtx{
+        .code = "S0211",
+        .token = this.val,
+        .pos = this.pos,
+    });
+    return ParseErr.BadUnaryOpAttempt;
+}
 
 pub const Parser = struct {
     err: ?ErrCtx = null,
     arena: ArenaAllocator,
     lexer: Tokenizer,
     node: ?Token = null,
+    symbol_table: SymbolTable,
+    errors: std.ArrayList(ErrCtx),
+    base_symbol: Token = Token{
+        .nud = base_symbol_nud,
+    },
+
+    pub fn setErr(this: *@This(), err: ErrCtx) void {
+        this.err = err;
+    }
+
     pub fn init(allocator: Allocator, hay: []const u8) Parser {
         var arena = ArenaAllocator.init(allocator);
-        return Parser{
+        var parser = Parser{
             .arena = arena,
             .lexer = Tokenizer.init(arena.allocator(), hay),
+            .symbol_table = SymbolTable.init(allocator),
+            .errors = std.ArrayList(ErrCtx).init(arena.allocator()),
         };
+        return parser;
+    }
+
+    pub fn symbol(this: *@This(), id: []u8, bp: u8) Token {
+        var s: ?Token = this.symbol_table.get(id);
+        if (s != null) {
+            if (bp >= s.?.lbp) {
+                s.?.lbp = bp;
+            }
+        } else {
+            s = Token{ .nud = base_symbol_nud };
+            s.?.id = id;
+            s.?.value = id;
+            s.?.lbp = bp;
+            this.symbol_table.put(id, s);
+        }
+        return s.?;
     }
 
     pub fn processAST(this: *@This(), token: Token) ParseErr!?Token {
@@ -362,12 +404,41 @@ pub const Parser = struct {
         return null;
     }
 
-    pub fn advance(this: *@This(), id: ?[]u8, infix: ?[]u8) ParseErr!?Token {
-        _ = this;
-        _ = infix;
-        _ = id;
-
-        return null;
+    pub fn advance(this: *@This(), id: []u8, infix: u8) ParseErr!Token {
+        if (id and std.mem.eql(u8, this.node.?.id, id)) {
+            var code: []u8 = undefined;
+            if (std.mem.eql(u8, this.node.?.id, "(end)")) {
+                code = "S0203";
+            } else {
+                code = "S0202";
+            }
+            var err = ErrCtx{
+                .code = code,
+                .pos = this.node.?.pos,
+                .token = this.node.?.val,
+                .value = id,
+            };
+            this.setErr(err);
+            return ParseErr.UnexpectedToken;
+        }
+        var next_token = try this.lexer.next(infix);
+        if (next_token == null) {
+            this.node = this.symbol_table.get("(end)");
+            this.node.?.pos = this.lexer.hay.len;
+            return this.node.?;
+        }
+        var val = next_token.?.val;
+        var typ = next_token.?.typ;
+        var symbol: Token = undefined;
+        if (case(.{ "name", "variable" }, typ)) {
+            symbol = this.symbol_table.get("(name)");
+        } else {
+            // TODO:
+            symbol = this.symbol_table.get("TODO");
+        }
+        // TODO: the end of the advance method
+        this.node = symbol;
+        return node;
     }
 
     pub fn expression(this: *@This(), rbp: u8) ParseErr!?Token {
@@ -390,13 +461,13 @@ pub const Parser = struct {
         // eventually, we may split Token and ..idk, Expression?
         expr = (try this.processAST(expr)).?;
         if (!std.mem.eql(u8, expr.typ, "parent")
-        //or expr.seekingParent == null
+        // or expr.seekingParent == null
         ) {
-            this.err = ErrCtx{
+            this.setErr(ErrCtx{
                 .code = "S0217",
                 .pos = expr.pos,
                 .token = expr.typ,
-            };
+            });
             return ParseErr.ParentCannotBeDerived;
         }
 
