@@ -1,4 +1,6 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArenaAllocator = std.heap.ArenaAllocator;
 const Regex = @import("regex").Regex;
 const json = std.json;
 const unicode = std.unicode;
@@ -64,11 +66,16 @@ const ParseErr = error{
 };
 
 const Token = struct {
+    id: ?[]u8 = null,
+    // ancestor: ?Token // -- this won't matter until we do processAST
+    // tuple?
+    // expressions?
+    // steps?
     pos: u32,
     typ: []u8,
     val: []u8,
 
-    pub fn create(pos: u32, typ: []u8, val: []u8) Token {
+    pub fn init(pos: u32, typ: []u8, val: []u8) Token {
         return Token{
             .pos = pos,
             .typ = typ,
@@ -94,10 +101,10 @@ const Tokenizer = struct {
     pos: usize = 0,
     hay: []const u8,
     err: ?ErrCtx = null,
-    arena: std.heap.ArenaAllocator,
+    allocator: Allocator,
 
-    pub fn create(arena: std.heap.ArenaAllocator, hay: []const u8) Tokenizer {
-        return .{ .arena = arena, .hay = hay };
+    pub fn init(allocator: Allocator, hay: []const u8) Tokenizer {
+        return .{ .allocator = allocator, .hay = hay };
     }
 
     pub fn next(this: *@This(), pfx: []u8) ParseErr!?Token {
@@ -144,37 +151,37 @@ const Tokenizer = struct {
         // handle double-char operators
         if (c == '.' and this.hay[this.pos + 1] == '.') {
             this.pos += 2;
-            return Token.create(this.pos, "operator", "..");
+            return Token.init(this.pos, "operator", "..");
         }
         if (c == ':' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
-            return Token.create(this.pos, "operator", ":=");
+            return Token.init(this.pos, "operator", ":=");
         }
         if (c == '!' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
-            return Token.create(this.pos, "operator", "!=");
+            return Token.init(this.pos, "operator", "!=");
         }
         if (c == '>' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
-            return Token.create(this.pos, "operator", ">=");
+            return Token.init(this.pos, "operator", ">=");
         }
         if (c == '<' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
-            return Token.create(this.pos, "operator", "<=");
+            return Token.init(this.pos, "operator", "<=");
         }
         if (c == '*' and this.hay[this.pos + 1] == '*') {
             this.pos += 2;
-            return Token.create(this.pos, "operator", "**");
+            return Token.init(this.pos, "operator", "**");
         }
         if (c == '~' and this.hay[this.pos + 1] == '>') {
             this.pos += 2;
-            return Token.create(this.pos, "operator", "~>");
+            return Token.init(this.pos, "operator", "~>");
         }
 
         // test for single char operators
         if (operators.has(&c) != null) {
             this.pos += 1;
-            return Token.create(this.pos, "operator", &c);
+            return Token.init(this.pos, "operator", &c);
         }
 
         // test for string literals
@@ -221,18 +228,18 @@ const Tokenizer = struct {
                     }
                 } else if (c == qt) {
                     this.pos += 1;
-                    return Token.create(this.pos, "string", qstr.items);
+                    return Token.init(this.pos, "string", qstr.items);
                 }
             }
         }
         const numregex = try Regex.compile(this.arena, "^-?(0|([1-9][0-9]*))(\\.[0-9]+)?([Ee][-+]?[0-9]+)?");
-        // defer numregex.deinit();
+        defer numregex.deinit();
         const match = try numregex.captures(this.hay[this.pos..]);
         if (match != null) {
-            // defer match.?.deinit();
+            defer match.?.deinit();
+            // this is safe to let eek out below--sliceAt() takes a slice of input to `.captures` above.
             const numraw = match.?.sliceAt(0).?;
-            const num = std.fmt.parseFloat(f64, numraw) catch |err| {
-                _ = err;
+            const num = std.fmt.parseFloat(f64, numraw) catch {
                 this.err = ErrCtx{
                     .code = "S0102",
                     .pos = this.pos,
@@ -259,7 +266,7 @@ const Tokenizer = struct {
             if (end != -1) {
                 name = this.hay[this.pos .. this.pos + end];
                 this.pos += end;
-                return Token.create(this.pos, "name", name);
+                return Token.init(this.pos, "name", name);
             }
             this.err = ErrCtx{
                 .code = "S0105",
@@ -278,23 +285,23 @@ const Tokenizer = struct {
                 if (this.hay[this.pos] == '$') {
                     name = this.hay[this.pos + 1 .. i];
                     this.pos = i;
-                    return Token.create(this.pos, "variable", name);
+                    return Token.init(this.pos, "variable", name);
                 } else {
                     name = this.hay[this.pos..i];
                     this.pos = i;
                     if (case(.{ "or", "in", "and" }, name)) {
-                        return Token.create(this.pos, "operator", name);
+                        return Token.init(this.pos, "operator", name);
                     } else if (case(.{"true"}, name)) {
-                        return Token.create(this.pos, "value", true);
+                        return Token.init(this.pos, "value", true);
                     } else if (case(.{"false"}, name)) {
-                        return Token.create(this.pos, "value", false);
+                        return Token.init(this.pos, "value", false);
                     } else if (case(.{"null"}, name)) {
-                        return Token.create(this.pos, "value", null);
+                        return Token.init(this.pos, "value", null);
                     } else {
                         if (this.pos == this.hay.len and name.len == 0) {
                             return null;
                         }
-                        return Token.create(this.pos, "name", name);
+                        return Token.init(this.pos, "name", name);
                     }
                 }
             } else {
@@ -325,18 +332,26 @@ test "tokenizer" {}
 const Ast = struct {};
 
 pub const Parser = struct {
-    arena: std.heap.ArenaAllocator,
+    arena: ArenaAllocator,
     lexer: Tokenizer,
-    pub fn create(allocator: std.mem.Allocator, hay: []const u8) Parser {
-        const arena = std.heap.ArenaAllocator.init(allocator);
+    pub fn create(allocator: Allocator, hay: []const u8) Parser {
+        var arena = ArenaAllocator.init(allocator);
         return .{
             .arena = arena,
-            .lexer = Tokenizer.create(arena, hay),
+            .lexer = Tokenizer.init(arena.allocator(), hay),
         };
     }
 
-    pub fn parse(this: *@This()) !?Ast {
+    pub fn advance(this: *@This(), id: ?[]u8, infix: ?[]u8) !?Token {
         _ = this;
+        _ = infix;
+        _ = id;
+
+        return null;
+    }
+
+    pub fn parse(this: *@This()) !?Ast {
+        _ = try this.advance(null, null);
         return null;
     }
 };
