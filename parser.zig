@@ -6,7 +6,7 @@ const json = std.json;
 const unicode = std.unicode;
 
 // [str] -> #
-const operators = std.ComptimeStringMap(u8, .{
+const Operators = std.ComptimeStringMap(u8, .{
     .{ ".", 75 },
     .{ "[", 80 },
     .{ "]", 0 },
@@ -43,10 +43,10 @@ const operators = std.ComptimeStringMap(u8, .{
     .{ "&", 50 },
     .{ "!", 0 }, // not an operator, but needed as a stop character for name token
     .{ "~", 0 }, // not an operator, but needed as a stop character for name token
-}){};
+});
 
 // [str] -> char
-const escapes = std.ComptimeStringMap(u8, .{
+const Escapes = std.ComptimeStringMap(u8, .{
     .{ "\"", '"' },
     .{ "\\", '\\' },
     .{ "/", '/' },
@@ -55,10 +55,12 @@ const escapes = std.ComptimeStringMap(u8, .{
     .{ "n", 'n' },
     .{ "t", 't' },
     .{ "r", 'r' },
-}){};
+});
 
 pub const ParseErr = error{
     Unimplemented, // X0000
+    OOM, // X0001
+    LexerRegexErr, // X0002
     NumOutOfRange, // S0102
     UnsupportedEscapeSequence, // S0103
     QuotedPropertyNameUnclosed, // S0105
@@ -77,16 +79,16 @@ pub const Token = struct {
     // tuple?
     // expressions?
     // steps?
-    pos: u32 = undefined,
-    typ: []u8 = undefined,
-    val: []u8 = undefined,
+    pos: usize = undefined,
+    typ: []const u8 = undefined,
+    val: []const u8 = undefined,
     parser: *Parser = undefined,
 
     nud: GetTokenFn = Token.defaultGetter,
     led: GetTokenFn = Token.defaultGetter,
     lbp: u8 = undefined,
 
-    pub fn init(pos: u32, typ: []u8, val: []u8) Token {
+    pub fn init(pos: usize, typ: []const u8, val: []const u8) Token {
         return Token{
             .pos = pos,
             .typ = typ,
@@ -134,13 +136,13 @@ const Tokenizer = struct {
             c = this.hay[this.pos .. this.pos + 1];
         }
         // skip comments
-        if (c == '/' and this.hay[this.pos + 1] == '*') {
+        if (c[0] == '/' and this.hay[this.pos + 1] == '*') {
             const comment_start = this.pos;
             this.pos += 2;
-            c = this.hay[this.pos];
-            while (!(c == '*' and this.hay[this.pos + 1] == '/')) {
+            c = this.hay[this.pos .. this.pos + 1];
+            while (!(c[0] == '*' and this.hay[this.pos + 1] == '/')) {
                 this.pos += 1;
-                c = this.hay[this.pos];
+                c = this.hay[this.pos .. this.pos + 1];
                 if (this.pos >= this.hay.len) {
                     // no closing tag
                     this.err = ErrCtx{
@@ -151,12 +153,12 @@ const Tokenizer = struct {
                 }
             }
             this.pos += 2;
-            c = this.hay[this.pos];
+            c = this.hay[this.pos .. this.pos + 1];
             return this.next(pfx); // need this to swallow any following whitespace
         }
 
         // test for regex
-        if (pfx != true and c == '/') {
+        if (pfx != true and c[0] == '/') {
             this.err = ErrCtx{
                 .code = "X0000",
                 .pos = this.pos,
@@ -165,55 +167,57 @@ const Tokenizer = struct {
         }
 
         // handle double-char operators
-        if (c == '.' and this.hay[this.pos + 1] == '.') {
+        if (c[0] == '.' and this.hay[this.pos + 1] == '.') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "..");
         }
-        if (c == ':' and this.hay[this.pos + 1] == '=') {
+        if (c[0] == ':' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", ":=");
         }
-        if (c == '!' and this.hay[this.pos + 1] == '=') {
+        if (c[0] == '!' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "!=");
         }
-        if (c == '>' and this.hay[this.pos + 1] == '=') {
+        if (c[0] == '>' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", ">=");
         }
-        if (c == '<' and this.hay[this.pos + 1] == '=') {
+        if (c[0] == '<' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "<=");
         }
-        if (c == '*' and this.hay[this.pos + 1] == '*') {
+        if (c[0] == '*' and this.hay[this.pos + 1] == '*') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "**");
         }
-        if (c == '~' and this.hay[this.pos + 1] == '>') {
+        if (c[0] == '~' and this.hay[this.pos + 1] == '>') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "~>");
         }
 
         // test for single char operators
-        if (operators.has(&c) != null) {
+        if (Operators.has(c)) {
             this.pos += 1;
-            return Token.init(this.pos, "operator", &c);
+            return Token.init(this.pos, "operator", c);
         }
 
         // test for string literals
-        if (c == '"' or c == '\'') {
+        if (c[0] == '"' or c[0] == '\'') {
             const qt = c; // quote type
             // double quoted string literal - find end of string
             this.pos += 1;
-            var qstr = std.ArrayList(u8).init(this.arena);
+            var qstr = std.ArrayList(u8).init(this.allocator);
             while (this.pos < this.hay.len) {
-                c = this.hay[this.pos];
-                if (c == '\\') {
+                c = this.hay[this.pos .. this.pos + 1];
+                if (c[0] == '\\') {
                     this.pos += 1;
-                    c = this.hay[this.pos];
-                    if (escapes.has(c) != null) {
-                        qstr.insert(1, escapes.has(c).?);
-                    } else if (c == 'u') {
+                    c = this.hay[this.pos .. this.pos + 1];
+                    if (Escapes.has(c)) {
+                        qstr.insert(1, Escapes.get(c).?) catch {
+                            return ParseErr.OOM;
+                        };
+                    } else if (c[0] == 'u') {
                         this.err = ErrCtx{
                             .code = "X0000",
                             .pos = this.pos,
@@ -242,15 +246,19 @@ const Tokenizer = struct {
                         };
                         return ParseErr.UnsupportedEscapeSequence;
                     }
-                } else if (c == qt) {
+                } else if (std.mem.eql(u8, c, qt)) {
                     this.pos += 1;
                     return Token.init(this.pos, "string", qstr.items);
                 }
             }
         }
-        const numregex = try Regex.compile(this.arena, "^-?(0|([1-9][0-9]*))(\\.[0-9]+)?([Ee][-+]?[0-9]+)?");
+        var numregex = Regex.compile(this.allocator, "^-?(0|([1-9][0-9]*))(\\.[0-9]+)?([Ee][-+]?[0-9]+)?") catch {
+            return ParseErr.LexerRegexErr;
+        };
         defer numregex.deinit();
-        const match = try numregex.captures(this.hay[this.pos..]);
+        var match = numregex.captures(this.hay[this.pos..]) catch {
+            return ParseErr.LexerRegexErr;
+        };
         if (match != null) {
             defer match.?.deinit();
             // this is safe to let eek out below--sliceAt() takes a slice of input to `.captures` above.
@@ -275,13 +283,13 @@ const Tokenizer = struct {
             }
         }
         // test for quoted names (backticks)
-        var name: []u8 = undefined;
-        if (c == '`') {
+        var name: []const u8 = undefined;
+        if (c[0] == '`') {
             this.pos += 1;
-            const end = std.mem.indexOf(u8, this.hay[this.pos..], '`');
-            if (end != -1) {
-                name = this.hay[this.pos .. this.pos + end];
-                this.pos += end;
+            const end = std.mem.indexOf(u8, this.hay[this.pos..], "`");
+            if (end != null) {
+                name = this.hay[this.pos .. this.pos + end.?];
+                this.pos += end.?;
                 return Token.init(this.pos, "name", name);
             }
             this.err = ErrCtx{
@@ -291,12 +299,12 @@ const Tokenizer = struct {
             return ParseErr.QuotedPropertyNameUnclosed;
         }
         var i = this.pos;
-        var ch: u8 = undefined;
+        var ch: []const u8 = undefined;
         while (true) {
-            ch = this.hay[i];
+            ch = this.hay[i .. i + 1];
             if (i == this.hay.len or
-                std.mem.indexOf(u8, " \t\n\r", c) > -1 or
-                operators.has(ch))
+                std.mem.indexOf(u8, " \t\n\r", c) != null or
+                Operators.has(ch))
             {
                 if (this.hay[this.pos] == '$') {
                     name = this.hay[this.pos + 1 .. i];
@@ -305,14 +313,16 @@ const Tokenizer = struct {
                 } else {
                     name = this.hay[this.pos..i];
                     this.pos = i;
-                    if (case(.{ "or", "in", "and" }, name)) {
+                    if (case(&[_][]const u8{ "or", "in", "and" }, name)) {
                         return Token.init(this.pos, "operator", name);
-                    } else if (case(.{"true"}, name)) {
-                        return Token.init(this.pos, "value", true);
-                    } else if (case(.{"false"}, name)) {
-                        return Token.init(this.pos, "value", false);
-                    } else if (case(.{"null"}, name)) {
-                        return Token.init(this.pos, "value", null);
+                    }
+                    // TODO: true/false/null here ~> string values? I am sort of punting.
+                    else if (case(&[_][]const u8{"true"}, name)) {
+                        return Token.init(this.pos, "value", "true");
+                    } else if (case(&[_][]const u8{"false"}, name)) {
+                        return Token.init(this.pos, "value", "false");
+                    } else if (case(&[_][]const u8{"null"}, name)) {
+                        return Token.init(this.pos, "value", "null");
                     } else {
                         if (this.pos == this.hay.len and name.len == 0) {
                             return null;
@@ -327,12 +337,12 @@ const Tokenizer = struct {
     }
 };
 
-fn case(comptime haystack: []const []const u8, needle: []const u8) bool {
-    inline for (haystack) |wheat| {
+fn case(haystack: []const []const u8, needle: []const u8) bool {
+    for (haystack) |wheat| {
         if (needle.len != haystack.len) {
             continue;
         }
-        inline for (wheat, needle) |barley, pin| {
+        for (wheat, needle) |barley, pin| {
             if (barley != pin) {
                 continue;
             }
@@ -404,7 +414,7 @@ pub const Parser = struct {
         return null;
     }
 
-    pub fn advance(this: *@This(), id: ?[]const u8, infix: bool) ParseErr!Token {
+    pub fn advance(this: *@This(), id: ?[]const u8, infix: bool) ParseErr!?Token {
         if (id != null and std.mem.eql(u8, this.node.?.id.?, id.?)) {
             var code: []const u8 = undefined;
             if (std.mem.eql(u8, this.node.?.id.?, "(end)")) {
@@ -424,18 +434,18 @@ pub const Parser = struct {
         var next_token = try this.lexer.next(infix);
         if (next_token == null) {
             this.node = this.symbol_table.get("(end)");
-            this.node.?.pos = @intCast(this.lexer.hay.len);
+            this.node.?.pos = this.lexer.hay.len;
             return this.node.?;
         }
         var val = next_token.?.val;
         _ = val;
         const typ: []const u8 = next_token.?.typ;
         var symb: Token = undefined;
-        if (case(.{ "name", "variable" }, typ)) {
-            symb = this.symbol_table.get("(name)");
+        if (case(&[_][]const u8{ "name", "variable" }, typ)) {
+            symb = this.symbol_table.get("(name)").?;
         } else {
             // TODO:
-            symb = this.symbol_table.get("TODO");
+            symb = this.symbol_table.get("TODO").?;
         }
         // TODO: the end of the advance method
         this.node = symb;
