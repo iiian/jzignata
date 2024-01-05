@@ -1,4 +1,5 @@
 const std = @import("std");
+const StandardOptimizeOptionOptions = std.Build.StandardOptimizeOptionOptions;
 
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
@@ -13,8 +14,10 @@ pub fn build(b: *std.Build) void {
     // Standard optimization options allow the person running `zig build` to select
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
     // set a preferred release mode, allowing the user to decide how to optimize.
-    const optopts = .{ .preferred_optimize_mode = std.builtin.OptimizeMode.Debug };
-    const optimize = b.standardOptimizeOption(optopts);
+    const optmode = StandardOptimizeOptionOptions{
+        .preferred_optimize_mode = std.builtin.OptimizeMode.Debug,
+    };
+    const optimize = b.standardOptimizeOption(optmode);
     const regex_dep = b.dependency("regex", .{
         // These are the arguments to the dependency. It expects a target and optimization level.
         .target = target,
@@ -26,6 +29,7 @@ pub fn build(b: *std.Build) void {
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = .{ .path = "jsonata.zig" },
+        .optimize = optimize,
     });
     exe.addModule("regex", regex_dep.module("regex"));
 
@@ -60,11 +64,11 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const unit_tests = b.addTest(.{
-        .root_source_file = .{ .path = "test_suite.zig" },
+        .root_source_file = .{ .path = "parser.zig" },
         .target = target,
         .optimize = optimize,
     });
-
+    unit_tests.addModule("regex", regex_dep.module("regex"));
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
     // Similar to creating the run step earlier, this exposes a `test` step to

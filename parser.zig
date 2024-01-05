@@ -96,6 +96,10 @@ pub const Token = struct {
         };
     }
 
+    pub fn undef() Token {
+        return Token{};
+    }
+
     fn defaultGetter(ctx: *Token) ParseErr!?*Token {
         _ = ctx;
         return null;
@@ -115,7 +119,7 @@ pub const ErrCtx = struct {
 /// Tokenizer
 ///   takes in a raw jsonata expression string
 ///   yields "tokens" until the (end) token is reached.
-const Tokenizer = struct {
+pub const Tokenizer = struct {
     pos: usize = 0,
     hay: []const u8,
     err: ?ErrCtx = null,
@@ -126,23 +130,21 @@ const Tokenizer = struct {
     }
 
     pub fn next(this: *@This(), pfx: bool) ParseErr!?Token {
-        if (this.pos >= this.hay.len) {
-            return null;
-        }
-        var c = this.hay[this.pos .. this.pos + 1];
+        if (this.pos >= this.hay.len) return null;
+        var currentChar = this.hay[this.pos..(this.pos + 1)];
         // skip whitespace
-        while (this.pos < this.hay.len and std.mem.indexOf(u8, " \t\n\r", c) != null) {
+        while (this.pos < this.hay.len and std.mem.indexOf(u8, " \t\n\r", currentChar) != null) {
             this.pos += 1;
-            c = this.hay[this.pos .. this.pos + 1];
+            currentChar = this.hay[this.pos..(this.pos + 1)];
         }
         // skip comments
-        if (c[0] == '/' and this.hay[this.pos + 1] == '*') {
+        if (currentChar[0] == '/' and this.hay[this.pos + 1] == '*') {
             const comment_start = this.pos;
             this.pos += 2;
-            c = this.hay[this.pos .. this.pos + 1];
-            while (!(c[0] == '*' and this.hay[this.pos + 1] == '/')) {
+            currentChar = this.hay[this.pos..(this.pos + 1)];
+            while (!(currentChar[0] == '*' and this.hay[this.pos + 1] == '/')) {
                 this.pos += 1;
-                c = this.hay[this.pos .. this.pos + 1];
+                currentChar = this.hay[this.pos..(this.pos + 1)];
                 if (this.pos >= this.hay.len) {
                     // no closing tag
                     this.err = ErrCtx{
@@ -153,75 +155,71 @@ const Tokenizer = struct {
                 }
             }
             this.pos += 2;
-            c = this.hay[this.pos .. this.pos + 1];
+            currentChar = this.hay[this.pos..(this.pos + 1)];
             return this.next(pfx); // need this to swallow any following whitespace
         }
-
         // test for regex
-        if (pfx != true and c[0] == '/') {
+        if (pfx != true and currentChar[0] == '/') {
             this.err = ErrCtx{
                 .code = "X0000",
                 .pos = this.pos,
             };
             return ParseErr.Unimplemented;
         }
-
         // handle double-char operators
-        if (c[0] == '.' and this.hay[this.pos + 1] == '.') {
+        if (currentChar[0] == '.' and this.hay[this.pos + 1] == '.') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "..");
         }
-        if (c[0] == ':' and this.hay[this.pos + 1] == '=') {
+        if (currentChar[0] == ':' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", ":=");
         }
-        if (c[0] == '!' and this.hay[this.pos + 1] == '=') {
+        if (currentChar[0] == '!' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "!=");
         }
-        if (c[0] == '>' and this.hay[this.pos + 1] == '=') {
+        if (currentChar[0] == '>' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", ">=");
         }
-        if (c[0] == '<' and this.hay[this.pos + 1] == '=') {
+        if (currentChar[0] == '<' and this.hay[this.pos + 1] == '=') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "<=");
         }
-        if (c[0] == '*' and this.hay[this.pos + 1] == '*') {
+        if (currentChar[0] == '*' and this.hay[this.pos + 1] == '*') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "**");
         }
-        if (c[0] == '~' and this.hay[this.pos + 1] == '>') {
+        if (currentChar[0] == '~' and this.hay[this.pos + 1] == '>') {
             this.pos += 2;
             return Token.init(this.pos, "operator", "~>");
         }
-
         // test for single char operators
-        if (Operators.has(c)) {
+        if (Operators.has(currentChar)) {
             this.pos += 1;
-            return Token.init(this.pos, "operator", c);
+            return Token.init(this.pos, "operator", currentChar);
         }
-
         // test for string literals
-        if (c[0] == '"' or c[0] == '\'') {
-            const qt = c; // quote type
+        if (currentChar[0] == '"' or currentChar[0] == '\'') {
+            const qt = currentChar; // quote type
             // double quoted string literal - find end of string
             this.pos += 1;
             var qstr = std.ArrayList(u8).init(this.allocator);
             while (this.pos < this.hay.len) {
-                c = this.hay[this.pos .. this.pos + 1];
-                if (c[0] == '\\') {
+                currentChar = this.hay[this.pos..(this.pos + 1)];
+                if (currentChar[0] == '\\') {
                     this.pos += 1;
-                    c = this.hay[this.pos .. this.pos + 1];
-                    if (Escapes.has(c)) {
-                        qstr.insert(1, Escapes.get(c).?) catch {
+                    currentChar = this.hay[this.pos..(this.pos + 1)];
+                    if (Escapes.has(currentChar)) {
+                        qstr.insert(1, Escapes.get(currentChar).?) catch {
                             return ParseErr.OOM;
                         };
-                    } else if (c[0] == 'u') {
+                    } else if (currentChar[0] == 'u') {
                         this.err = ErrCtx{
                             .code = "X0000",
                             .pos = this.pos,
-                            .value = c,
+                            .value = currentChar,
                         };
                         // TODO
                         return ParseErr.Unimplemented; // line 219 of parser.js
@@ -242,11 +240,11 @@ const Tokenizer = struct {
                         this.err = ErrCtx{
                             .code = "S0103",
                             .pos = this.pos,
-                            .token = c,
+                            .token = currentChar,
                         };
                         return ParseErr.UnsupportedEscapeSequence;
                     }
-                } else if (std.mem.eql(u8, c, qt)) {
+                } else if (std.mem.eql(u8, currentChar, qt)) {
                     this.pos += 1;
                     return Token.init(this.pos, "string", qstr.items);
                 }
@@ -284,7 +282,7 @@ const Tokenizer = struct {
         }
         // test for quoted names (backticks)
         var name: []const u8 = undefined;
-        if (c[0] == '`') {
+        if (currentChar[0] == '`') {
             this.pos += 1;
             const end = std.mem.indexOf(u8, this.hay[this.pos..], "`");
             if (end != null) {
@@ -301,9 +299,9 @@ const Tokenizer = struct {
         var i = this.pos;
         var ch: []const u8 = undefined;
         while (true) {
-            ch = this.hay[i .. i + 1];
+            ch = if (i >= this.hay.len) "" else this.hay[i..(i + 1)];
             if (i == this.hay.len or
-                std.mem.indexOf(u8, " \t\n\r", c) != null or
+                std.mem.indexOf(u8, " \t\n\r", currentChar) != null or
                 Operators.has(ch))
             {
                 if (this.hay[this.pos] == '$') {
@@ -339,7 +337,7 @@ const Tokenizer = struct {
 
 fn case(haystack: []const []const u8, needle: []const u8) bool {
     for (haystack) |wheat| {
-        if (needle.len != haystack.len) {
+        if (needle.len != wheat.len) {
             continue;
         }
         for (wheat, needle) |barley, pin| {
@@ -373,9 +371,7 @@ pub const Parser = struct {
     node: ?Token = null,
     symbol_table: SymbolTable,
     errors: std.ArrayList(ErrCtx),
-    base_symbol: Token = Token{
-        .nud = base_symbol_nud,
-    },
+    // base_symbol: Token = Token.undef(),
 
     pub fn setErr(this: *@This(), err: ErrCtx) void {
         this.err = err;
