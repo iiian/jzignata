@@ -28,7 +28,12 @@ pub fn jsonata(expr: []const u8) !Expr {
 }
 
 pub fn main() !void {
-    const haystack = "$$.x&$$.y";
+    const haystack =
+        \\ $$.things#$i.(
+        \\   $x := -3.482e10;
+        \\   $$.abcd + $x
+        \\ )
+    ;
     var alloc = std.heap.GeneralPurposeAllocator(.{}){};
     var lexer = Tokenizer.init(alloc.allocator(), haystack);
     while (try lexer.next(false)) |tok| {

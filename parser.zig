@@ -67,6 +67,8 @@ pub const ParseErr = error{
     CommentDoesntEnd, // S0106
     SyntaxErr, // S0201
     UnexpectedToken, // S0202
+    UnknownOperator, // S0204
+    UnknownExpressionTyp, // S0205
     BadUnaryOpAttempt, // S0211
     ParentCannotBeDerived, // S0217
 };
@@ -271,6 +273,7 @@ pub const Tokenizer = struct {
             };
             if (!std.math.isNan(num) and std.math.isFinite(num)) {
                 this.pos += numraw.len;
+                return Token.init(this.pos, "number", numraw);
             } else {
                 this.err = ErrCtx{
                     .code = "S0102",
@@ -336,13 +339,13 @@ pub const Tokenizer = struct {
 };
 
 fn case(haystack: []const []const u8, needle: []const u8) bool {
-    for (haystack) |wheat| {
+    outer: for (haystack) |wheat| {
         if (needle.len != wheat.len) {
             continue;
         }
         for (wheat, needle) |barley, pin| {
             if (barley != pin) {
-                continue;
+                continue :outer;
             }
         }
         return true;
@@ -412,19 +415,12 @@ pub const Parser = struct {
 
     pub fn advance(this: *@This(), id: ?[]const u8, infix: bool) ParseErr!?Token {
         if (id != null and std.mem.eql(u8, this.node.?.id.?, id.?)) {
-            var code: []const u8 = undefined;
-            if (std.mem.eql(u8, this.node.?.id.?, "(end)")) {
-                code = "S0203";
-            } else {
-                code = "S0202";
-            }
-            var err = ErrCtx{
-                .code = code,
+            this.setErr(ErrCtx{
+                .code = "S0202",
                 .pos = this.node.?.pos,
                 .token = this.node.?.val,
                 .value = id.?,
-            };
-            this.setErr(err);
+            });
             return ParseErr.UnexpectedToken;
         }
         var next_token = try this.lexer.next(infix);
@@ -434,23 +430,77 @@ pub const Parser = struct {
             return this.node.?;
         }
         var val = next_token.?.val;
-        _ = val;
         const typ: []const u8 = next_token.?.typ;
         var symb: Token = undefined;
-        if (case(&[_][]const u8{ "name", "variable" }, typ)) {
-            symb = this.symbol_table.get("(name)").?;
-        } else {
-            // TODO:
-            symb = this.symbol_table.get("TODO").?;
+        switch (Parser.caseAdvance(typ)) {
+            .NameVariable => {
+                symb = this.symbol_table.get("(name)");
+            },
+            .Operator => {
+                symb = this.symbol_table.get(val);
+                if (!symb) {
+                    this.err = ErrCtx{
+                        .code = "S0204",
+                        .pos = next_token.?.pos,
+                        .token = val,
+                    };
+                    return ParseErr.UnknownOperator;
+                }
+            },
+            .StringNumberValue => {
+                symb = this.symbol_table.get("(literal)");
+            },
+            .Regex => {
+                typ = "";
+                symb = this.symbol_table.get("(regex)");
+            },
+            else => {
+                this.err = ErrCtx{
+                    .code = "S0205",
+                    .pos = next_token.?.pos,
+                    .token = val,
+                };
+                return ParseErr.UnknownExpressionTyp;
+            },
         }
-        // TODO: the end of the advance method
-        this.node = symb;
+
+        this.node = Token.init(symb.pos, symb.typ, symb.val);
+        this.node.?.val = val;
+        this.node.?.pos = next_token.?.pos;
         return this.node;
     }
 
+    const AdvanceSwitch1 = enum { NameVariable, Operator, StringNumberValue, Regex, Other };
+    pub fn caseAdvance(typ: []const u8) AdvanceSwitch1 {
+        return switch (typ[0]) {
+            'o' => if (std.mem.eql(u8, "perator", typ[1..])) AdvanceSwitch1.Operator else AdvanceSwitch1.Other,
+            'n' => switch (typ[1]) {
+                'u' => if (std.mem.eql(u8, "mber", typ[2..])) AdvanceSwitch1.StringNumberValue else AdvanceSwitch1.Other,
+                'a' => if (std.mem.eql(u8, "me", typ[2..])) AdvanceSwitch1.NameVariable else AdvanceSwitch1.Other,
+                else => AdvanceSwitch1.Other,
+            },
+            's' => switch (typ[1]) {
+                't' => if (std.mem.eql(u8, "ring", typ[2..])) AdvanceSwitch1.StringNumberValue else AdvanceSwitch1.Other,
+                else => AdvanceSwitch1.Other,
+            },
+            'v' => switch (typ[1]) {
+                'a' => if (std.mem.eql(u8, "lue", typ[2..])) AdvanceSwitch1.StringNumberValue else AdvanceSwitch1.Other,
+                else => AdvanceSwitch1.Other,
+            },
+            else => AdvanceSwitch1.Other,
+        };
+    }
+
     pub fn expression(this: *@This(), rbp: u8) ParseErr!?Token {
-        _ = this;
-        _ = rbp;
+        var left: Token = undefined;
+        var t: Token = this.node;
+        _ = try this.advance(null, true);
+        left = t.nud();
+        while (rbp < this.node.?.lbp) {
+            t = this.node.?;
+            this.advance(null, false);
+            left = t.led();
+        }
         return null;
     }
 
