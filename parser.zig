@@ -76,7 +76,7 @@ pub const ParseErr = error{
 const GetTokenFn = *const fn (ctx: *Token) ParseErr!?*Token;
 
 pub const Token = struct {
-    id: ?[]u8 = null,
+    id: []u8 = undefined,
     // ancestor: ?Token // -- this won't matter until we do processAST
     // tuple?
     // expressions?
@@ -96,10 +96,6 @@ pub const Token = struct {
             .typ = typ,
             .val = val,
         };
-    }
-
-    pub fn undef() Token {
-        return Token{};
     }
 
     fn defaultGetter(ctx: *Token) ParseErr!?*Token {
@@ -354,59 +350,66 @@ fn case(haystack: []const []const u8, needle: []const u8) bool {
     return false;
 }
 
-test "tokenizer" {}
+pub const TerminalSymbol = struct {};
 
-const SymbolTable = std.StringArrayHashMap(Token);
+// unfortunately, with the way the parser was written
+// with what little I know, all I can think to do is write
+// a kitchen sink type that I'll probably have to clean up some day.
+pub const Symbol = struct {
+    id: []u8 = undefined,
+    val: []u8 = undefined,
+    lbp: u8 = 0,
+    parser: *Parser = undefined,
+    nud: *const fn (this: *@This()) Symbol,
+    led: *const fn (this: *@This(), that: *Symbol) Symbol,
 
-fn base_symbol_nud(this: *Token) ParseErr!?*Token {
-    this.parser.setErr(ErrCtx{
-        .code = "S0211",
-        .token = this.val,
-        .pos = this.pos,
-    });
-    return ParseErr.BadUnaryOpAttempt;
-}
+    const base_symbol: Symbol = .{};
+
+    pub fn create(s: Symbol) Symbol {
+        return Symbol{
+            .id = s.id,
+            .val = s.val,
+            .lbp = s.lbp,
+        };
+    }
+};
+
+const SymbolTable = std.StringArrayHashMap(SymbolTable);
 
 pub const Parser = struct {
-    err: ?ErrCtx = null,
     arena: ArenaAllocator,
     lexer: Tokenizer,
-    node: ?Token = null,
+    node: *anyopaque = undefined,
     symbol_table: SymbolTable,
+    err: ?ErrCtx = null,
     errors: std.ArrayList(ErrCtx),
-    // base_symbol: Token = Token.undef(),
 
-    pub fn setErr(this: *@This(), err: ErrCtx) void {
-        this.err = err;
-    }
-
-    pub fn init(allocator: Allocator, hay: []const u8) Parser {
-        var arena = ArenaAllocator.init(allocator);
-        var parser = Parser{
-            .arena = arena,
-            .lexer = Tokenizer.init(arena.allocator(), hay),
-            .symbol_table = SymbolTable.init(allocator),
-            .errors = std.ArrayList(ErrCtx).init(arena.allocator()),
-        };
-        return parser;
-    }
-
-    pub fn symbol(this: *@This(), id: []u8, bp: u8) Token {
+    pub fn symbol(this: *@This(), id: []u8, bp: u8) Symbol {
         var s: ?Token = this.symbol_table.get(id);
         if (s != null) {
             if (bp >= s.?.lbp) {
                 s.?.lbp = bp;
             }
         } else {
-            s = Token{ .nud = base_symbol_nud };
-            s.?.id = id;
-            s.?.value = id;
-            s.?.lbp = bp;
+            s = Symbol.create(Symbol.base_symbol);
+            s.id = id;
+            s.val = id;
+            s.lbp = bp;
             this.symbol_table.put(id, s);
         }
-        return s.?;
+
+        return s;
     }
 
+    pub fn init(allocator: Allocator, hay: []const u8) Parser {
+        var arena = ArenaAllocator.init(allocator);
+        return Parser{
+            .arena = arena,
+            .lexer = Tokenizer.init(arena.allocator(), hay),
+            .symbol_table = SymbolTable.init(allocator),
+            .errors = std.ArrayList(ErrCtx).init(arena.allocator()),
+        };
+    }
     pub fn processAST(this: *@This(), token: Token) ParseErr!?Token {
         _ = this;
         _ = token;

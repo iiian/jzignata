@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const exe = b.addExecutable(.{
+    const exe = b.addExecutable(std.Build.ExecutableOptions{
         .name = "zig",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.

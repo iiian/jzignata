@@ -5,7 +5,7 @@
           "type": "lldb",
           "request": "launch",
           "name": "Zibug Tests",
-          "program": "${workspaceFolder}/zig-cache/o/396a8302eb40beb9e9c8ae274cc81717/test",
+          "program": "${workspaceFolder}/zig-out/bin/zig",
           "args": [],
           "cwd": "${workspaceFolder}",
           
